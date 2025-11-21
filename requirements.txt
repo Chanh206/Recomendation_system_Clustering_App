@@ -10,3 +10,4 @@ regex
 category-encoders
 openpyxl
 umap-learn
+Pillow
