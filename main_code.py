@@ -20,6 +20,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 from category_encoders import CatBoostEncoder
 from sklearn.manifold import TSNE
+from PIL import Image
 #############################################################
 # ===================== CUSTOM CSS ===================== #
 st.markdown("""
@@ -298,7 +299,8 @@ menu = [
     "App Description",
     "Control panels",
     "Recommendation & Clustering",
-    "Visualization"
+    "Visualization",
+    "Task assignment"
 ]
 
 page = st.sidebar.radio("Go to:", menu)
@@ -309,6 +311,11 @@ page = st.sidebar.radio("Go to:", menu)
 if page == "Home":
     st.subheader("🏍️ Welcome to the Motorcycle Analytics Dashboard")
     st.write("""
+        Bussiness Problem: Một sàn thương mại điện tử (hoặc website rao vặt xe máy cũ như Chợ Tốt,...) đang gặp 3 vấn đề lớn:
+        - Người mua khó tìm đúng xe phù hợp vì số tin đăng lớn nhưng hệ thống trả kết quả không thực sự giống với nhu cầu.
+        - Người mua không biết mức giá nào là hợp lý có thể cùng một mẫu xe nhưng giá dao động rất mạnh
+        - Người bán không biết nhóm khách hàng nào phù hợp với xe của họ để tối ưu hoá việc tiếp cận khách hàng tiềm năng.
+             
         Ứng dụng này cho phép bạn:
         - 🔍 Tìm kiếm xe tương tự bằng Recommendation System  
         - 📊 Thực hiện phân cụm dựa vào nhiều thuộc tính  
@@ -554,7 +561,55 @@ elif page == "Visualization":
     ax2.axis("off")
     st.pyplot(fig2)
 
+# =============== PAGE: TASK ASSIGNMENT =============== #
+elif page == "Task assignment":
+    st.subheader("📋 Task Assignment")
+
+    st.markdown("""
+        ### 🧑‍💻 Bảng phân công công việc
+        
+        | Thành viên         | Công việc |
+        |--------------------|-----------|
+        | **Nguyễn Duy Thanh** | GUI for Recommendation System and Clustering |
+        | **Nguyễn Thái Bình** | GUI for Price Prediction and Anomaly Detection |
+    """)
+
 
 # ===================== FOOTER ===================== #
 st.sidebar.markdown("---")
-st.sidebar.write("Designed by Duy-Thanh Nguyen")
+# Load ảnh
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ===================== AVATAR ===================== #
+avatar_path = os.path.join(BASE_DIR, "avatar.jpg")
+avatar = Image.open(avatar_path)
+
+# --- THÔNG SỐ ---
+offset_ratio = 0.10   # dịch xuống 15% chiều cao ảnh (có thể chỉnh 0.10–0.25)
+
+# --- Crop top nhưng dịch xuống ---
+w, h = avatar.size
+size = min(w, h)
+
+# Tính offset theo tỉ lệ chiều cao
+offset = int(size * offset_ratio)
+
+left   = (w - size) / 2
+top    = offset
+right  = (w + size) / 2
+bottom = offset + size
+
+# Đảm bảo không vượt quá ảnh thật
+bottom = min(bottom, h)
+
+avatar = avatar.crop((left, top, right, bottom))
+
+# --- Resize sắc nét ---
+avatar = avatar.resize((80, 80), Image.LANCZOS)
+
+# --- Hiển thị ---
+st.sidebar.image(avatar, width=80, use_column_width=False)
+
+# --- Footer ---
+st.sidebar.write("Designed by **Duy-Thanh Nguyen**")
+st.sidebar.write("Email: duythanh200620@gmail.com")
