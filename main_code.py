@@ -115,12 +115,12 @@ def show_lobby():
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("👤 Người dùng", use_container_width=True):
+        if st.button("👤 Người dùng", width="stretch"):
             # Người dùng vào trước khi có dữ liệu -> chỉ xem được 3 trang
             st.session_state.app_mode = "user"
             st.rerun()
     with col2:
-        if st.button("🛠 Quản trị", use_container_width=True):
+        if st.button("🛠 Quản trị", width="stretch"):
             st.session_state.app_mode = "admin"
             st.rerun()
 
@@ -222,11 +222,11 @@ if st.session_state.app_mode == "admin":
 if st.session_state.file_ready:
     with st.sidebar.expander("🔁 Chuyển đổi chế độ"):
         if st.session_state.app_mode == "admin":
-            if st.button("👤 Chuyển sang Người dùng", use_container_width=True):
+            if st.button("👤 Chuyển sang Người dùng", width="stretch"):
                 st.session_state.app_mode = "user"
                 st.rerun()
         else:
-            if st.button("🛠 Chuyển sang Quản trị", use_container_width=True):
+            if st.button("🛠 Chuyển sang Quản trị", width="stretch"):
                 st.session_state.app_mode = "admin"
                 st.rerun()
 
@@ -328,7 +328,7 @@ st.markdown("<h1 class='title-center'>Ứng dụng dự đoán và phân cụm x
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 image_path = os.path.join(BASE_DIR, "Logo_ChoTot.png")
-st.image(image_path, use_container_width=True)
+st.image(image_path, width="stretch")
 
 col1, col2 = st.columns([1, 1])
 total_items = st.session_state.get("total_items", len(df) if df is not None else 0)
@@ -678,7 +678,10 @@ elif page == "Đề xuất & Phân cụm":
                 model = st.session_state.cluster_model
 
                 new_brand = encoder.transform(pd.DataFrame({"Thương hiệu": [brand]}))
-                new_numeric = scaler.transform([[gia, km, cc, year]])
+                new_numeric = scaler.transform(
+                    pd.DataFrame([[gia, km, cc, year]], 
+                                columns=['Giá_num', 'Km_num', 'Dung_tich_num', 'Năm đăng ký'])
+                )
                 X_new = np.concatenate([new_numeric, new_brand.values], axis=1)
 
                 if hasattr(model, "predict"):
