@@ -18,6 +18,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 from category_encoders import CatBoostEncoder
 from PIL import Image
+import io
 
 # ==============================================
 #  ĐƯỜNG DẪN FILE DỮ LIỆU CHUNG CHO ADMIN + USER
@@ -133,17 +134,13 @@ if st.session_state.app_mode is None:
 #  BACKEND HÀM DUY NHẤT (LOAD + TIỀN XỬ LÝ)
 # ============================================
 @st.cache_resource
-def load_backend(excel_path):
-    import re
-    from pyvi.ViTokenizer import tokenize
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    import pickle
-    import pandas as pd
-    import os
+@st.cache_resource
+def load_backend(file_content):
 
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    df = pd.read_excel(io.BytesIO(file_content))
 
     # ==== Load stopwords ====
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     STOP_WORD_FILE = os.path.join(BASE_DIR, "vietnamese-stopwords.txt")
     with open(STOP_WORD_FILE, "r", encoding="utf-8") as f:
         stop_words = f.read().split("\n")
@@ -161,11 +158,9 @@ def load_backend(excel_path):
     emoji_dict = load_dict(os.path.join(BASE_DIR, "emojicon.txt"))
     wrong_dict = load_dict(os.path.join(BASE_DIR, "wrong-word.txt"))
 
-    # ==== Load data ====
-    df = pd.read_excel(excel_path)
     df["id"] = range(len(df))
 
-    # ==== Text preprocess functions ====
+    # ==== Text utils ====
     def normalize_text_light(text):
         text = str(text).lower()
         for k, v in emoji_dict.items():
@@ -179,11 +174,9 @@ def load_backend(excel_path):
         return " ".join([w for w in text.split() if w not in stop_words])
 
     def preprocess_text(text):
-        text = normalize_text_light(text)
-        text = remove_stopwords(text)
-        return " ".join(tokenize(text))
+        return " ".join(tokenize(remove_stopwords(normalize_text_light(text))))
 
-    # ==== Prepare TF-IDF ====
+    # ==== TF-IDF ====
     if "Content_wt_joined" not in df.columns:
         df["Content_wt"] = df["Content"].apply(normalize_text_light).apply(remove_stopwords)
         df["Content_wt_joined"] = df["Content_wt"].apply(lambda x: " ".join(tokenize(x)))
@@ -193,8 +186,7 @@ def load_backend(excel_path):
     vectorizer = TfidfVectorizer(token_pattern=r"(?u)\b\w+\b", min_df=2)
     tfidf_matrix = vectorizer.fit_transform(df["Content_wt_joined"])
 
-    # ==== Load cosine matrix ====
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    # ==== Load cosine_matrix ====
     with open(os.path.join(BASE_DIR, "Cosine_similarity_matrix.pkl"), "rb") as f:
         cosine_sim = pickle.load(f)
 
@@ -216,10 +208,15 @@ uploaded_file = None
 if st.session_state.app_mode == "admin":
     uploaded_file = st.sidebar.file_uploader("📤 Tải lên file Excel", type=["xlsx", "xls"])
     if uploaded_file is not None:
-        with open(DATA_PATH, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+
+        # Ghi dữ liệu file vào RAM
+        st.session_state["excel_bytes"] = uploaded_file.getvalue()
         st.session_state.file_ready = True
-        st.success("✅ Đã cập nhật dữ liệu cho toàn hệ thống!")
+
+        st.success("✅ Đã tải dữ liệu vào RAM!")
+
+        # Không rerun ở đây, rerun sẽ làm sidebar mất widget
+        # st.rerun()
 
 # ---- Widget chuyển mode (chỉ xuất hiện khi đã có dữ liệu) ----
 if st.session_state.file_ready:
@@ -274,8 +271,11 @@ df = None
 cosine_sim = vectorizer = tfidf_matrix = None
 normalize_text_light = remove_stopwords = preprocess_text = None
 
-if st.session_state.file_ready and os.path.exists(DATA_PATH):
-    df, cosine_sim, vectorizer, tfidf_matrix, normalize_text_light, remove_stopwords, preprocess_text = load_backend(DATA_PATH)
+df = None
+if st.session_state.file_ready and "excel_bytes" in st.session_state:
+    df, cosine_sim, vectorizer, tfidf_matrix, normalize_text_light, remove_stopwords, preprocess_text = \
+        load_backend(st.session_state["excel_bytes"])
+
 
 # ===== Khởi tạo giá trị mặc định cho card thống kê =====
 if "total_items" not in st.session_state:
@@ -320,10 +320,10 @@ def recommend_by_keyword(keyword, nums=7):
 
 #############################################################
 # ===================== HEADER & CARDS ===================== #
-st.markdown("<div class='header'>Bảng điều khiển dự đoán & phân cụm xe hơi</div>",
+st.markdown("<div class='header'>Bảng điều khiển dự đoán & phân cụm xe máy</div>",
             unsafe_allow_html=True)
 
-st.markdown("<h1 class='title-center'>Ứng dụng dự đoán và phân cụm xe hơi</h1>",
+st.markdown("<h1 class='title-center'>Ứng dụng dự đoán và phân cụm xe máy</h1>",
             unsafe_allow_html=True)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -416,22 +416,54 @@ elif page == "Đề xuất & Phân cụm":
     # TAB 1 - Đề xuất
     with tab1:
         st.header("🔍 Motorcycle Hệ thống đề xuất")
-        rec_mode = st.radio("Chọn cách gợi ý:", ["Theo ID", "Theo từ khóa"])
+        rec_mode = st.radio("Chọn cách gợi ý:", ["Theo danh mục có sẵn", "Theo từ khóa"])
 
-        if rec_mode == "Theo ID":
-            input_id = st.number_input("Nhập ID xe:", min_value=0, max_value=len(df)-1, step=1)
+        if rec_mode == "Theo danh mục có sẵn":  
+            st.subheader("🔍 Tìm kiếm theo danh mục xe")
+
+            # Nhập từ khóa
+            keyword = st.text_input("Nhập từ khóa để lọc danh mục:")
+
+            # Tạo danh sách gợi ý danh mục
+            if keyword.strip() == "":
+                # 10 danh mục ngẫu nhiên
+                suggested_titles = df["Tiêu đề"].sample(10, random_state=42).tolist()
+            else:
+                # Lọc theo keyword (không phân biệt hoa thường)
+                suggested_titles = df[df["Tiêu đề"].str.contains(keyword, case=False, na=False)] \
+                                    ["Tiêu đề"].head(10).tolist()
+
+                if len(suggested_titles) == 0:
+                    st.warning("❗ Không tìm thấy danh mục phù hợp. Hiển thị danh mục ngẫu nhiên.")
+                    suggested_titles = df["Tiêu đề"].sample(10, random_state=42).tolist()
+
+            # Chọn tiêu đề
+            selected_title = st.selectbox("Chọn danh mục xe cần tìm gợi ý:", suggested_titles)
+
+            # Số lượng gợi ý
             nums = st.slider("Số lượng gợi ý:", 3, 20, 7)
 
-            if st.button("🔎 Recommend by ID"):
-                result = get_recomendations(int(input_id), nums=nums)
+            # Lấy ID từ tiêu đề đã chọn
+            selected_id = int(df[df["Tiêu đề"] == selected_title]["id"].values[0])
+
+            if st.button("🔎 Gợi ý theo danh mục"):
+                result = get_recomendations(selected_id, nums=nums)
+                st.markdown("""
+                **🔹 Cosine Similarity** 
+                - Giá trị từ **0 → 1**. Càng gần **1** → Hai mô tả xe càng giống nhau.  
+                - **> 0.7** → Tương đồng mạnh (rất liên quan).  
+                - 0.4 – 0.7 → Tương đồng trung bình.  
+                - **< 0.3** → Tương đồng thấp.
+                """)                 
                 st.dataframe(result)
 
+                # WordCloud từ các tiêu đề gợi ý
                 text = " ".join(result["Tiêu đề"].astype(str))
                 wc = WordCloud(width=800, height=350, background_color="white").generate(text)
                 fig, ax = plt.subplots(figsize=(8, 4))
                 ax.imshow(wc, interpolation="bilinear")
                 ax.axis("off")
-                st.pyplot(fig)
+                st.pyplot(fig)               
 
         if rec_mode == "Theo từ khóa":
             keyword = st.text_input("Nhập từ khóa:")
@@ -439,6 +471,13 @@ elif page == "Đề xuất & Phân cụm":
 
             if st.button("🔎 Gợi ý theo từ khóa"):
                 result = recommend_by_keyword(keyword, nums)
+                st.markdown("""
+                **🔹 Cosine Similarity** 
+                - Giá trị từ **0 → 1**. Càng gần **1** → Hai mô tả xe càng giống nhau.  
+                - **> 0.7** → Tương đồng mạnh (rất liên quan).  
+                - 0.4 – 0.7 → Tương đồng trung bình.  
+                - **< 0.3** → Tương đồng thấp.
+                """)                
                 st.dataframe(result)
 
                 text = " ".join(result["Tiêu đề"].astype(str))
@@ -487,125 +526,145 @@ elif page == "Đề xuất & Phân cụm":
     with tab2:
         st.header("📦 Phân cụm xe máy")
 
+        # Build dataset
         X2_scaled, df2_cluster, encoder, scaler = build_cluster_dataset(df)
 
-        if st.button("🔍 Khảo sát số cụm"):
-            K_range = range(2, 10)
-            inertia = []
-            sil_scores = []
+        # ==============================================
+        #   TRƯỜNG HỢP ADMIN — ĐẦY ĐỦ CHỨC NĂNG
+        # ==============================================
+        if st.session_state.app_mode == "admin":
 
-            st.session_state.inertia = None
-            st.session_state.sil_scores = None
-            st.session_state.survey_done = False
+            # ====== KHẢO SÁT SỐ CỤM ======
+            if st.button("🔍 Khảo sát số cụm"):
+                K_range = range(2, 10)
+                inertia = []
+                sil_scores = []
 
-            for k_tmp in K_range:
-                kmeans_tmp = KMeans(n_clusters=k_tmp, random_state=42)
-                labels_tmp = kmeans_tmp.fit_predict(X2_scaled)
-                inertia.append(kmeans_tmp.inertia_)
-                sil_scores.append(silhouette_score(X2_scaled, labels_tmp))
+                st.session_state.survey_done = False
 
-            st.session_state.survey_done = True
-            st.session_state.inertia = inertia
-            st.session_state.sil_scores = sil_scores
-            st.success("Đã hoàn thành khảo sát số cụm!")
+                for k_tmp in K_range:
+                    kmeans_tmp = KMeans(n_clusters=k_tmp, random_state=42)
+                    labels_tmp = kmeans_tmp.fit_predict(X2_scaled)
+                    inertia.append(kmeans_tmp.inertia_)
+                    sil_scores.append(silhouette_score(X2_scaled, labels_tmp))
 
-        if st.session_state.survey_done:
-            K_range = range(2, 10)
+                st.session_state.survey_done = True
+                st.session_state.inertia = inertia
+                st.session_state.sil_scores = sil_scores
+                st.success("Đã hoàn thành khảo sát số cụm!")
 
-            fig_elbow, ax_elbow = plt.subplots()
-            ax_elbow.plot(K_range, st.session_state.inertia, "o-")
-            ax_elbow.set_xlabel("Số cụm (k)")
-            ax_elbow.set_ylabel("Inertia")
-            ax_elbow.set_title("Biểu đồ Elbow")
-            st.pyplot(fig_elbow)
+            if st.session_state.get("survey_done", False):
+                K_range = range(2, 10)
 
-            fig_sil, ax_sil = plt.subplots()
-            ax_sil.plot(K_range, st.session_state.sil_scores, "o-")
-            ax_sil.set_xlabel("Số cụm (k)")
-            ax_sil.set_ylabel("Silhouette Score")
-            ax_sil.set_title("Biểu đồ Silhouette")
-            st.pyplot(fig_sil)
+                fig_elbow, ax_elbow = plt.subplots()
+                ax_elbow.plot(K_range, st.session_state.inertia, "o-")
+                ax_elbow.set_xlabel("Số cụm (k)")
+                ax_elbow.set_ylabel("Inertia")
+                ax_elbow.set_title("Biểu đồ Elbow")
+                st.pyplot(fig_elbow)
 
-        k = st.number_input("🔢 Chọn số cụm tối ưu", min_value=2, max_value=15, value=4, step=1)
+                fig_sil, ax_sil = plt.subplots()
+                ax_sil.plot(K_range, st.session_state.sil_scores, "o-")
+                ax_sil.set_xlabel("Số cụm (k)")
+                ax_sil.set_ylabel("Silhouette Score")
+                ax_sil.set_title("Biểu đồ Silhouette")
+                st.pyplot(fig_sil)
 
-        algo = st.selectbox(
-            "Chọn thuật toán phân cụm",
-            ["KMeans", "Gaussian Mixture", "Agglomerative"]
-        )
+            # ===== CHỌN THUẬT TOÁN, CHẠY PHÂN CỤM =====
+            k = st.number_input("🔢 Chọn số cụm tối ưu", min_value=2, max_value=15, value=4, step=1)
+            algo = st.selectbox(
+                "Chọn thuật toán phân cụm",
+                ["KMeans", "Gaussian Mixture", "Agglomerative"]
+            )
 
-        if st.button("🚀 Chạy phân cụm"):
-            if algo == "KMeans":
-                model = KMeans(n_clusters=k, random_state=42)
-                labels = model.fit_predict(X2_scaled)
-            elif algo == "Gaussian Mixture":
-                model = GaussianMixture(n_components=k, random_state=42)
-                labels = model.fit_predict(X2_scaled)
-            else:
-                model = AgglomerativeClustering(n_clusters=k)
-                labels = model.fit_predict(X2_scaled)
+            if st.button("🚀 Chạy phân cụm"):
+                if algo == "KMeans":
+                    model = KMeans(n_clusters=k, random_state=42)
+                    labels = model.fit_predict(X2_scaled)
+                elif algo == "Gaussian Mixture":
+                    model = GaussianMixture(n_components=k, random_state=42)
+                    labels = model.fit_predict(X2_scaled)
+                else:
+                    model = AgglomerativeClustering(n_clusters=k)
+                    labels = model.fit_predict(X2_scaled)
 
-            sil = silhouette_score(X2_scaled, labels)
+                sil = silhouette_score(X2_scaled, labels)
 
-            st.session_state.cluster_model = model
-            st.session_state.labels = labels
-            st.session_state.X2_scaled = X2_scaled
-            st.session_state.encoder = encoder
-            st.session_state.scaler = scaler
+                st.session_state.cluster_model = model
+                st.session_state.labels = labels
+                st.session_state.X2_scaled = X2_scaled
+                st.session_state.encoder = encoder
+                st.session_state.scaler = scaler
 
-            df2_cluster['Cluster'] = labels
-            st.session_state.df2_cluster = df2_cluster.copy()
+                df2_cluster['Cluster'] = labels
+                st.session_state.df2_cluster = df2_cluster.copy()
 
-            st.session_state.cluster_labels = {}
+                st.session_state.cluster_labels = {}
+                st.session_state.total_items = len(df2_cluster)
+                st.session_state.total_clusters = k
 
-            st.session_state.total_items = len(df2_cluster)
-            st.session_state.total_clusters = k
+                st.success(f"🎯 Đã phân cụm thành công bằng {algo} — Silhouette = {sil:.3f}")
+                st.markdown("""
+                **🔹 Silhouette Score**
+                - Đánh giá **mức độ tách biệt giữa các cụm** và **mức độ tập trung trong từng cụm**. Giá trị nằm trong khoảng **[-1, 1]**.  
+                - Càng gần **1** → Cụm phân chia càng rõ ràng, dễ tách biệt.  
+                - Từ **0.5 trở lên** → Chất lượng phân cụm tốt.  
+                - Từ **0.3 – 0.5** → Chấp nhận được.  
+                - Dưới **0.25** → Cụm chồng chéo, chất lượng chưa tốt.
+                """)
+                # PCA visualization
+                pca = PCA(n_components=2)
+                comps = pca.fit_transform(X2_scaled)
+                fig, ax = plt.subplots(figsize=(8, 5))
+                sns.scatterplot(x=comps[:, 0], y=comps[:, 1], hue=labels, palette="tab10", ax=ax)
+                st.pyplot(fig)
 
-            st.success(f"🎯 Đã phân cụm thành công bằng {algo} — Silhouette = {sil:.3f}")
+                # Summary
+                cluster_counts = df2_cluster['Cluster'].value_counts().sort_index()
+                cluster_means = df2_cluster.groupby('Cluster')[['Giá_num', 'Km_num', 'Dung_tich_num', 'Năm đăng ký']].mean()
+                summary = pd.concat([
+                    cluster_counts.rename("Số lượng"),
+                    cluster_means
+                ], axis=1)
 
-            pca = PCA(n_components=2)
-            comps = pca.fit_transform(X2_scaled)
-            fig, ax = plt.subplots(figsize=(8, 5))
-            sns.scatterplot(x=comps[:, 0], y=comps[:, 1], hue=labels, palette="tab10", ax=ax)
-            st.pyplot(fig)
+                st.session_state.cluster_summary = summary.copy()
 
-            cluster_counts = df2_cluster['Cluster'].value_counts().sort_index()
-            cluster_means = df2_cluster.groupby('Cluster')[['Giá_num', 'Km_num', 'Dung_tich_num', 'Năm đăng ký']].mean()
+            # ====== FORM ĐẶT TÊN CỤM ======
+            if st.session_state.cluster_summary is not None:
+                st.subheader("✏️ Đặt tên cho từng cụm")
 
-            summary = pd.concat([
-                cluster_counts.rename("Số lượng"),
-                cluster_means
-            ], axis=1)
+                with st.form("form_cluster_name"):
+                    new_labels = {}
+                    for cid in st.session_state.cluster_summary.index:
+                        default = st.session_state.cluster_labels.get(cid, f"Cụm {cid}")
+                        new_labels[cid] = st.text_input(f"Tên cụm {cid}", value=default)
+                    submitted = st.form_submit_button("💾 Lưu tên cụm")
 
-            st.session_state.cluster_summary = summary.copy()
+                if submitted:
+                    st.session_state.cluster_labels = new_labels
+                    updated = st.session_state.cluster_summary.copy()
+                    updated["Tên cụm"] = [new_labels[c] for c in updated.index]
+                    cols = ["Tên cụm"] + [c for c in updated.columns if c != "Tên cụm"]
+                    updated = updated[cols]
+                    st.session_state.cluster_summary = updated
+                    st.success("✔ Đã cập nhật tên cụm!")
 
-        # Nhập tên cụm
+        # ==============================================
+        #     TRƯỜNG HỢP NGƯỜI DÙNG — CHỈ ĐƯỢC XEM
+        # ==============================================
+        else:
+            st.info("👤 Bạn đang ở chế độ Người dùng — chỉ được xem kết quả phân cụm đã được Admin cấu hình.")
+
+        # ===== HIỂN THỊ BẢNG THỐNG KÊ (DÙ ADMIN HAY USER) =====
         if st.session_state.cluster_summary is not None:
-            st.subheader("✏️ Đặt tên cho từng cụm")
-
-            with st.form("form_cluster_name"):
-                new_labels = {}
-                for cid in st.session_state.cluster_summary.index:
-                    default = st.session_state.cluster_labels.get(cid, f"Cụm {cid}")
-                    new_labels[cid] = st.text_input(f"Tên cụm {cid}", value=default)
-                submitted = st.form_submit_button("💾 Lưu tên cụm")
-
-            if submitted:
-                st.session_state.cluster_labels = new_labels
-                updated = st.session_state.cluster_summary.copy()
-                updated["Tên cụm"] = [new_labels[c] for c in updated.index]
-                cols = ["Tên cụm"] + [c for c in updated.columns if c != "Tên cụm"]
-                updated = updated[cols]
-                st.session_state.cluster_summary = updated
-                st.success("✔ Đã cập nhật tên cụm!")
-
             st.subheader("📊 Bảng thống kê cụm (đã cập nhật)")
             st.dataframe(st.session_state.cluster_summary)
 
-        # ---------------- DỰ ĐOÁN CỤM CHO XE MỚI ----------------
+        # ===== DỰ ĐOÁN CỤM CHO XE MỚI (CẢ USER & ADMIN ĐỀU XÀI ĐƯỢC) =====
         st.subheader("🔮 Dự đoán cụm cho xe mới")
 
         if st.session_state.cluster_model is None:
-            st.warning("⚠ Bạn cần chạy phân cụm trước!")
+            st.warning("⚠ Bạn cần để Admin chạy phân cụm trước!")
         else:
             gia = st.number_input("Giá xe", min_value=0)
             km = st.number_input("Km đã đi", min_value=0)
